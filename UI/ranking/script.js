@@ -1,0 +1,1 @@
+const ranks=['Alice','Bob','Charlie'];const ol=document.getElementById('rank');ranks.forEach(n=>{const li=document.createElement('li');li.textContent=n;ol.appendChild(li);});

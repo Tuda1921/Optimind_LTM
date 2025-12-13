@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tasks</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>Tasks</h1>
+    <nav>
+      <a href="../home/index.html">Home</a>
+      <a href="../login/index.html">Đăng nhập</a>
+      <a href="../register/index.html">Đăng ký</a>
+      <a href="../chat/index.html">Chat</a>
+      <a href="../study/index.html">Study</a>
+      <a href="../rooms/index.html">Rooms</a>
+      <a href="../calendar/index.html">Calendar</a>
+      <a href="../gamification/index.html">Gamification</a>
+      <a href="../profile/index.html">Profile</a>
+      <a href="../ranking/index.html">Ranking</a>
+      <a href="../history/index.html">History</a>
+      <a href="../setting/index.html">Setting</a>
+      <a href="../test/index.html">Test</a>
+    </nav>
+  </header>
+  <main class="kanban">
+    <section class="column" data-id="todo"><h2>To Do</h2><div class="list" id="todo"></div></section>
+    <section class="column" data-id="onProgress"><h2>In Progress</h2><div class="list" id="onProgress"></div></section>
+    <section class="column" data-id="complete"><h2>Complete</h2><div class="list" id="complete"></div></section>
+    <section class="column" data-id="overdue"><h2>Overdue</h2><div class="list" id="overdue"></div></section>
+  </main>
+  <script src="script.js"></script>
+</body>
+</html>

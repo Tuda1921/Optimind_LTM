@@ -1,0 +1,1 @@
+const items=['Login','Join room','Finish task'];const ul=document.getElementById('history');items.forEach(i=>{const li=document.createElement('li');li.textContent=i;ul.appendChild(li);});

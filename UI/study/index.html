@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Study - Optimind</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>Study</h1>
+    <nav>
+      <a href="../home/index.html">Home</a>
+      <a href="../login/index.html">Đăng nhập</a>
+      <a href="../register/index.html">Đăng ký</a>
+      <a href="../chat/index.html">Chat</a>
+      <a href="../tasks/index.html">Tasks</a>
+      <a href="../rooms/index.html">Rooms</a>
+      <a href="../calendar/index.html">Calendar</a>
+      <a href="../gamification/index.html">Gamification</a>
+      <a href="../profile/index.html">Profile</a>
+      <a href="../ranking/index.html">Ranking</a>
+      <a href="../history/index.html">History</a>
+      <a href="../setting/index.html">Setting</a>
+      <a href="../test/index.html">Test</a>
+    </nav>
+  </header>
+  
+  <main class="study-main">
+    <div class="study-container">
+      <!-- Pomodoro Timer Widget -->
+      <div class="timer-widget glass">
+        <div class="timer-header">
+          <button id="settingsBtn" class="icon-btn">⚙️</button>
+          <button id="taskListBtn" class="icon-btn">📋</button>
+        </div>
+        <div class="timer-display">
+          <div id="timerText" class="timer-text">25:00</div>
+          <div id="modeLabel" class="mode-label">Tập trung</div>
+          <div id="cyclesLabel" class="cycles-label">Chu kỳ: 0/4</div>
+        </div>
+        <div class="timer-controls">
+          <button id="playPauseBtn" class="control-btn">▶️ Bắt đầu</button>
+          <button id="resetBtn" class="control-btn">🔄 Reset</button>
+        </div>
+      </div>
+
+      <div class="widgets-row">
+        <!-- Task List Widget -->
+        <div id="taskListWidget" class="task-widget glass hidden">
+          <div class="widget-header">
+            <h3>Tasks</h3>
+            <button id="closeTasksBtn" class="close-btn">✖️</button>
+          </div>
+          <div class="add-task-row">
+            <input id="newTaskInput" type="text" placeholder="Thêm task mới..." />
+            <button id="addTaskBtn">➕</button>
+          </div>
+          <div id="taskList" class="task-list"></div>
+        </div>
+
+        <!-- Focus Chart Widget -->
+        <div class="chart-widget glass">
+          <h3>Độ tập trung</h3>
+          <canvas id="focusChart" width="400" height="200"></canvas>
+          <div id="focusStatus" class="focus-status">Chưa bắt đầu</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Settings Dialog -->
+  <div id="settingsDialog" class="dialog hidden">
+    <div class="dialog-content glass">
+      <h2>Cài đặt Pomodoro</h2>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="pomodoro">Pomodoro</button>
+        <button class="tab-btn" data-tab="countdown">Countdown</button>
+      </div>
+      <div class="tab-content active" id="pomodoroTab">
+        <label>Thời gian tập trung (phút): <input id="focusTimeInput" type="number" value="25" min="1" /></label>
+        <label>Thời gian nghỉ (phút): <input id="breakTimeInput" type="number" value="5" min="1" /></label>
+        <label>Thời gian nghỉ dài (phút): <input id="longBreakInput" type="number" value="15" min="1" /></label>
+        <label>Số chu kỳ: <input id="cyclesInput" type="number" value="4" min="1" /></label>
+      </div>
+      <div class="tab-content" id="countdownTab">
+        <label>Thời gian đếm ngược (phút): <input id="countdownInput" type="number" value="10" min="1" /></label>
+      </div>
+      <div class="dialog-actions">
+        <button id="saveSettingsBtn" class="btn-primary">Lưu</button>
+        <button id="cancelSettingsBtn" class="btn-secondary">Hủy</button>
+      </div>
+    </div>
+  </div>
+
+  <audio id="notifSound" src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIGWm98eaeSwkKT6fk7rJlHQU2mdXxynkrBSl+zfDdj0AKElyw6OytWBUIRp/g8r5sIQYsgc/z2og1CBpqvvPmnU4LCU6n5O+yZRwGN5nV8sl5KgUofM3v3I9ACRJcsOntrVgVCEef4fK/aygFKn/N8dmINQgZar/z5Z1NC3jO8tiJNgYaaL3y5p5PC0lJn+HyvmwiBjWa1vHLeSoGKH/P8N2PQAoSXLDp7axYFQhGoODxvmwiBSqCzvHZiTYIGWm+8+edTgsJTqfk8LJlHAc4mdXzy3krBSh9zvDej0APEVux6e2tVxQJSKDh8r5sIQUsgs/y2Yk2Bhlpv/PnnUwMCE6o5fCyZRsHN5jV88p5KwUqfs3w3I9ADhFcsOnurVcVB0mg4fK+bCIFLIPO8tmJNgcZar7z5p1MCwlPqOXws2UcBzaZ1fPKeSoGKX3O8NyPQQ4SXrDp7q5YFQdJoN/yvmwiBi2Dz/HaiTUHGmq+9OadTQsJTqjl8LNlHQc3mNXzy3krBSl9zvDdj0EOEV2w6e2tWBUGSZ/h8r5sIgYsgc7y2og2Bxpqv/TnnUwKCU+n5PC0ZhsGN5rW88t6KgUofM3w3Y9BDhFdsOnurVgVCEeg4fG+ayEGLYHP8tmJNgcZa7/z5p1NCQlPp+TwtGYbBjeY1fLLeSwGKX7O8N2PQA0RXLDo7a1YFQhJn+HyvmwhBiyDz/HaiTUHGWq/8+ecTQsJT6fk8LJnGwc3mNXyy3ksBSl+zvDcj0EOEVuw6e+tWBUISpDOAAAAAAAAAAAAAAAA"></audio>
+  
+  <script src="script.js"></script>
+</body>
+</html>

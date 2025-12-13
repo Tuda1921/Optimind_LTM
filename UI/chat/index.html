@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>Chat</h1>
+    <nav>
+      <a href="../home/index.html">Home</a>
+      <a href="../login/index.html">Đăng nhập</a>
+      <a href="../register/index.html">Đăng ký</a>
+      <a href="../study/index.html">Study</a>
+      <a href="../tasks/index.html">Tasks</a>
+      <a href="../rooms/index.html">Rooms</a>
+      <a href="../calendar/index.html">Calendar</a>
+      <a href="../gamification/index.html">Gamification</a>
+      <a href="../profile/index.html">Profile</a>
+      <a href="../ranking/index.html">Ranking</a>
+      <a href="../history/index.html">History</a>
+      <a href="../setting/index.html">Setting</a>
+      <a href="../test/index.html">Test</a>
+    </nav>
+  </header>
+  <main class="chat">
+    <aside class="sidebar">
+      <input id="search" placeholder="Tìm bạn..." />
+      <ul id="chatList"></ul>
+    </aside>
+    <section class="window">
+      <div id="messages" class="messages"></div>
+      <form id="sendForm" class="send">
+        <input id="text" placeholder="Nhập tin nhắn..." />
+        <button type="submit">Gửi</button>
+      </form>
+    </section>
+  </main>
+  <script src="script.js"></script>
+</body>
+</html>
