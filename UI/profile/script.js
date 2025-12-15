@@ -1,1 +1,0 @@
-const user=JSON.parse(localStorage.getItem('user_data')||'{"email":"demo@example.com","username":"demo"}');document.getElementById('info').textContent=`Email: ${user.email} • Username: ${user.username}`;

@@ -12,5 +12,7 @@
 
 size_t base64_encoded_size(size_t input_length);
 void base64_encode(const unsigned char* data, size_t input_length, char* encoded_data, size_t encoded_capacity);
+size_t base64_decoded_size(const char* b64, size_t len);
+int base64_decode(const char* b64, size_t len, unsigned char* out, size_t out_capacity);
 
 #endif // BASE64_H

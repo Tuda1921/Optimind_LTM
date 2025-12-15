@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <time.h>
+#include <stdbool.h>
 #include "../common/protocol.h"
 #include "../common/config.h"
 
@@ -26,6 +27,7 @@
 
 typedef struct {
     char username[64];
+    char password[64];
     int total_coins;
     int total_sessions;
     int total_seconds;
@@ -38,6 +40,7 @@ typedef struct {
     time_t session_start;
     int frame_count;
     int logged_in;
+    bool is_websocket;
 } ClientContext;
 
 typedef struct {

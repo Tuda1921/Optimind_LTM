@@ -1,1 +1,0 @@
-document.getElementById('calendar').textContent='(Placeholder lịch)';

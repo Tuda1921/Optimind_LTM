@@ -1,3 +1,0 @@
-const pets=[{id:'hamster',name:'Hamster',level:1,exp:0,maxExp:100,unlocked:true,unlockLevel:0,avatar:'🐹'},{id:'goldfish',name:'Cá Vàng',level:1,exp:0,maxExp:100,unlocked:false,unlockLevel:5,avatar:'🐠'}];
-const ul=document.getElementById('pets');
-pets.forEach(p=>{const li=document.createElement('li');li.textContent=`${p.avatar} ${p.name} • Lv ${p.level} • ${p.exp}/${p.maxExp}`;ul.appendChild(li);});

@@ -1,1 +1,0 @@
-document.getElementById('dark').addEventListener('change',(e)=>{document.body.style.background=e.target.checked?'#0b1220':'#fff';document.body.style.color=e.target.checked?'#fff':'#000';});

@@ -20,8 +20,11 @@
 #include <pthread.h>
 #include <time.h>
 #include <errno.h>
+#include <ctype.h>
 
 #include "handlers.h"
+#include "websocket.h"
+#include "../client/base64.h"
 
 extern void log_message(const char* level, const char* format, ...);
 
@@ -43,11 +46,17 @@ void load_users_from_file() {
 
     char line[256];
     while (fgets(line, sizeof(line), f)) {
-        char user[64];
+        char user[64], pass[64] = {0};
         int coins = 0, sessions = 0, seconds = 0;
-        if (sscanf(line, "%63[^|]|%d|%d|%d", user, &coins, &sessions, &seconds) == 4) {
+        int n = sscanf(line, "%63[^|]|%63[^|]|%d|%d|%d", user, pass, &coins, &sessions, &seconds);
+        if (n == 4) { // backward compatible file without password
+            strcpy(pass, "");
+        }
+        if (n >= 4) {
             int idx = shared_find_or_add_user_unlocked(user);
             if (idx >= 0) {
+                strncpy(g_shared.users[idx].password, pass, sizeof(g_shared.users[idx].password)-1);
+                g_shared.users[idx].password[sizeof(g_shared.users[idx].password)-1] = '\0';
                 g_shared.users[idx].total_coins = coins;
                 g_shared.users[idx].total_sessions = sessions;
                 g_shared.users[idx].total_seconds = seconds;
@@ -70,8 +79,9 @@ void save_users_to_file() {
     pthread_mutex_lock(&g_shared.mtx);
     for (int i = 0; i < MAX_USERS; ++i) {
         if (!g_shared.users[i].in_use) continue;
-        fprintf(f, "%s|%d|%d|%d\n",
+        fprintf(f, "%s|%s|%d|%d|%d\n",
                 g_shared.users[i].username,
+                g_shared.users[i].password,
                 g_shared.users[i].total_coins,
                 g_shared.users[i].total_sessions,
                 g_shared.users[i].total_seconds);
@@ -95,6 +105,15 @@ void append_history_record(const char* username, int seconds, int coins) {
 }
 
 // Internal find/add without locking (caller must hold g_shared.mtx)
+static int shared_find_user_unlocked(const char* username) {
+    for (int i = 0; i < MAX_USERS; ++i) {
+        if (g_shared.users[i].in_use && strcmp(g_shared.users[i].username, username) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 static int shared_find_or_add_user_unlocked(const char* username) {
     int idx = -1, free_idx = -1;
     for (int i = 0; i < MAX_USERS; ++i) {
@@ -163,54 +182,92 @@ void shared_add_session_result(const char* username, int seconds, int coins) {
     pthread_mutex_unlock(&g_shared.mtx);
 }
 
-static void handle_login(ClientContext* ctx, const char* payload, int length) {
-    // Payload format: "username|password"
-    char user[64] = {0};
-    const char* bar = (const char*)memchr(payload, '|', length);
-    if (bar) {
-        int ulen = (int)(bar - payload);
-        if (ulen > 63) ulen = 63;
-        memcpy(user, payload, ulen);
+static void send_error(ClientContext* ctx, const char* where, const char* message) {
+    if (ctx->is_websocket) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"event\":\"error\",\"data\":{\"where\":\"%s\",\"message\":\"%s\"}}", where, message);
+        websocket_send_text(ctx->client_fd, buf, (int)strlen(buf));
     } else {
-        // If no delimiter, take all as username
-        int ulen = length < 63 ? length : 63;
-        memcpy(user, payload, ulen);
+        send_packet(ctx->client_fd, MSG_ERROR, message, (int)strlen(message));
+    }
+}
+
+static int parse_user_pass(const char* payload, int length, char* user, int ulen, char* pass, int plen) {
+    const char* bar = (const char*)memchr(payload, '|', length);
+    if (!bar) return -1;
+    int nuser = (int)(bar - payload);
+    if (nuser >= ulen) nuser = ulen - 1;
+    memcpy(user, payload, nuser); user[nuser] = '\0';
+    int npass = length - (int)(bar - payload) - 1;
+    if (npass >= plen) npass = plen - 1;
+    memcpy(pass, bar + 1, npass); pass[npass] = '\0';
+    return 0;
+}
+
+static int handle_login(ClientContext* ctx, const char* payload, int length) {
+    char user[64] = {0}, pass[64] = {0};
+    if (parse_user_pass(payload, length, user, sizeof(user), pass, sizeof(pass)) < 0) {
+        send_error(ctx, "login", "Thiếu username|password");
+        return -1;
     }
 
-    // Copy username safely and guarantee null-termination
+    pthread_mutex_lock(&g_shared.mtx);
+    int idx = shared_find_user_unlocked(user);
+    if (idx < 0 || strcmp(g_shared.users[idx].password, pass) != 0) {
+        pthread_mutex_unlock(&g_shared.mtx);
+        send_error(ctx, "login", "Sai tài khoản hoặc mật khẩu");
+        return -1;
+    }
+    pthread_mutex_unlock(&g_shared.mtx);
+
     strncpy(ctx->username, user, sizeof(ctx->username) - 1);
     ctx->username[sizeof(ctx->username) - 1] = '\0';
     ctx->logged_in = 1;
 
     const char* ok = RESPONSE_OK;
-    send_packet(ctx->client_fd, MSG_LOGIN_RES, ok, (int)strlen(ok));
+    if (ctx->is_websocket) {
+        websocket_send_text(ctx->client_fd, "{\"event\":\"login_ok\"}", 22);
+    } else {
+        send_packet(ctx->client_fd, MSG_LOGIN_RES, ok, (int)strlen(ok));
+    }
     log_message("INFO", "[Auth] User %s logged in", ctx->username);
+    return 0;
 }
 
-static void handle_register(ClientContext* ctx, const char* payload, int length) {
-    // Payload format: "username|password" (demo: chấp nhận mọi đăng ký)
-    char user[64] = {0};
-    const char* bar = (const char*)memchr(payload, '|', length);
-    if (bar) {
-        int ulen = (int)(bar - payload);
-        if (ulen > 63) ulen = 63;
-        memcpy(user, payload, ulen);
-    } else {
-        int ulen = length < 63 ? length : 63;
-        memcpy(user, payload, ulen);
+static int handle_register(ClientContext* ctx, const char* payload, int length) {
+    char user[64] = {0}, pass[64] = {0};
+    if (parse_user_pass(payload, length, user, sizeof(user), pass, sizeof(pass)) < 0 || pass[0] == '\0') {
+        send_error(ctx, "register", "Thiếu username|password");
+        return -1;
     }
 
-    // Lưu tên người dùng vào context (tuỳ chọn)
-    strncpy(ctx->username, user, sizeof(ctx->username) - 1);
-    ctx->username[sizeof(ctx->username) - 1] = '\0';
+    pthread_mutex_lock(&g_shared.mtx);
+    int idx = shared_find_user_unlocked(user);
+    if (idx >= 0) {
+        pthread_mutex_unlock(&g_shared.mtx);
+        send_error(ctx, "register", "Tài khoản đã tồn tại");
+        return -1;
+    }
+    int new_idx = shared_find_or_add_user_unlocked(user);
+    if (new_idx >= 0) {
+        strncpy(g_shared.users[new_idx].password, pass, sizeof(g_shared.users[new_idx].password) - 1);
+        g_shared.users[new_idx].password[sizeof(g_shared.users[new_idx].password) - 1] = '\0';
+        g_shared.users[new_idx].total_coins = 0;
+        g_shared.users[new_idx].total_sessions = 0;
+        g_shared.users[new_idx].total_seconds = 0;
+    }
+    pthread_mutex_unlock(&g_shared.mtx);
 
-    // Trả về OK (demo không kiểm tra trùng/ghi file)
-    const char* ok = RESPONSE_OK;
-    send_packet(ctx->client_fd, MSG_REGISTER_RES, ok, (int)strlen(ok));
-    log_message("INFO", "[Auth] User %s registered", ctx->username);
-
-    // Lưu persist
     save_users_to_file();
+
+    const char* ok = RESPONSE_OK;
+    if (ctx->is_websocket) {
+        websocket_send_text(ctx->client_fd, "{\"event\":\"register_ok\"}", 25);
+    } else {
+        send_packet(ctx->client_fd, MSG_REGISTER_RES, ok, (int)strlen(ok));
+    }
+    log_message("INFO", "[Auth] User %s registered", user);
+    return 0;
 }
 
 static void handle_start_session(ClientContext* ctx) {
@@ -223,7 +280,7 @@ static void handle_end_session(ClientContext* ctx) {
     time_t now = time(NULL);
     int seconds = (int)difftime(now, ctx->session_start);
     if (seconds < 0) seconds = 0;
-    int coins = seconds / 60 * 10; // 10 coins per minute
+    int coins = (seconds / 60) * COINS_PER_MINUTE;
 
     const char* user = ctx->username[0] ? ctx->username : "guest";
     shared_add_session_result(user, seconds, coins);
@@ -234,37 +291,41 @@ static void handle_end_session(ClientContext* ctx) {
 
     char json[256];
     snprintf(json, sizeof(json), "{\"seconds\":%d,\"coins\":%d}", seconds, coins);
-    send_packet(ctx->client_fd, MSG_UPDATE_COINS, json, (int)strlen(json));
+    if (ctx->is_websocket) {
+        char wrapper[320];
+        int w = snprintf(wrapper, sizeof(wrapper), "{\"event\":\"session_result\",\"data\":%s}", json);
+        websocket_send_text(ctx->client_fd, wrapper, w);
+    } else {
+        send_packet(ctx->client_fd, MSG_UPDATE_COINS, json, (int)strlen(json));
+    }
     log_message("INFO", "[Pomo] %s ended session: %d sec, %d coins", user, seconds, coins);
 }
 
 static void handle_stream_frame(ClientContext* ctx, const char* data, int length) {
     ctx->frame_count++;
-    
-    // Tạo thư mục frames/ nếu chưa có
-    // system("mkdir -p frames");
-    
-    // Lưu frame vào file với tên: <username>_frame_<số>.png
+
     const char* user = ctx->username[0] ? ctx->username : "guest";
-    char filename[256];
-    snprintf(filename, sizeof(filename), "frames/%s_frame_%d.png", user, ctx->frame_count);
-    
-    FILE* f = fopen(filename, "wb");
-    if (f) {
-        fwrite(data, 1, length, f);
-        fclose(f);
-        log_message("INFO", "[Stream] Saved frame #%d from %s (%d bytes) to %s", 
-                    ctx->frame_count, user, length, filename);
+
+    // Tính điểm tập trung đơn giản dựa trên checksum payload (demo)
+    unsigned long long sum = 0;
+    int step = (length > 4096) ? length / 4096 : 1;
+    for (int i = 0; i < length; i += step) sum += (unsigned char)data[i];
+    int score = (int)((sum % 10100) / 100); // 0..100
+
+    char json[128];
+    snprintf(json, sizeof(json), "{\"score\":%d,\"frames\":%d}", score, ctx->frame_count);
+    if (ctx->is_websocket) {
+        char wrap[180];
+        int w = snprintf(wrap, sizeof(wrap), "{\"event\":\"focus_update\",\"data\":%s}", json);
+        websocket_send_text(ctx->client_fd, wrap, w);
+        if (score < FOCUS_THRESHOLD) {
+            websocket_send_text(ctx->client_fd, "{\"event\":\"focus_warn\"}", 30);
+        }
     } else {
-        log_message("ERROR", "[Stream] Failed to save frame #%d from %s to %s: %s", 
-                    ctx->frame_count, user, filename, strerror(errno));
+        send_packet(ctx->client_fd, MSG_FOCUS_UPDATE, json, (int)strlen(json));
+        if (score < FOCUS_THRESHOLD) send_packet(ctx->client_fd, MSG_FOCUS_WARN, NULL, 0);
     }
-    
-    // Gửi cảnh báo mỗi 5 frame
-    if (ctx->frame_count % 5 == 0) {
-        send_packet(ctx->client_fd, MSG_FOCUS_WARN, NULL, 0);
-        log_message("WARN", "[AI] Warning sent to %s after %d frames", user, ctx->frame_count);
-    }
+    log_message("INFO", "[Stream] Frame %d from %s, score=%d", ctx->frame_count, user, score);
 }
 
 static void handle_get_leaderboard(ClientContext* ctx) {
@@ -285,7 +346,13 @@ static void handle_get_leaderboard(ClientContext* ctx) {
     pthread_mutex_unlock(&g_shared.mtx);
 
     off += snprintf(buf+off, sizeof(buf)-off, "]");
-    send_packet(ctx->client_fd, MSG_RES_LEADERBOARD, buf, (int)strlen(buf));
+    if (ctx->is_websocket) {
+        char wrapper[2300];
+        int w = snprintf(wrapper, sizeof(wrapper), "{\"event\":\"leaderboard\",\"data\":%s}", buf);
+        websocket_send_text(ctx->client_fd, wrapper, w);
+    } else {
+        send_packet(ctx->client_fd, MSG_RES_LEADERBOARD, buf, (int)strlen(buf));
+    }
 }
 
 static void handle_get_profile(ClientContext* ctx) {
@@ -302,7 +369,108 @@ static void handle_get_profile(ClientContext* ctx) {
 
     snprintf(buf, sizeof(buf), "{\"username\":\"%s\",\"coins\":%d,\"sessions\":%d,\"seconds\":%d}",
              ctx->username, coins, sessions, seconds);
-    send_packet(ctx->client_fd, MSG_RES_PROFILE, buf, (int)strlen(buf));
+    if (ctx->is_websocket) {
+        char wrapper[600];
+        int w = snprintf(wrapper, sizeof(wrapper), "{\"event\":\"profile\",\"data\":%s}", buf);
+        websocket_send_text(ctx->client_fd, wrapper, w);
+    } else {
+        send_packet(ctx->client_fd, MSG_RES_PROFILE, buf, (int)strlen(buf));
+    }
+}
+
+// -------- WebSocket helpers --------
+static void send_ws_simple(ClientContext* ctx, const char* event, const char* payload) {
+    char buf[1024];
+    if (!payload) payload = "null";
+    int n = snprintf(buf, sizeof(buf), "{\"event\":\"%s\",\"data\":%s}", event, payload);
+    if (n < 0) return;
+    websocket_send_text(ctx->client_fd, buf, n);
+}
+
+static int json_find_string(const char* json, int len, const char* key, char* out, int outlen) {
+    // Very small JSON extractor: assumes "key":"value" without escapes.
+    const char* p = json;
+    int klen = (int)strlen(key);
+    while (p < json + len) {
+        const char* k = strstr(p, key);
+        if (!k) break;
+        k += klen;
+        const char* colon = strchr(k, ':');
+        if (!colon) break;
+        const char* quote = strchr(colon, '"');
+        if (!quote) { p = colon + 1; continue; }
+        quote++;
+        const char* end = strchr(quote, '"');
+        if (!end) break;
+        int slen = (int)(end - quote);
+        if (slen >= outlen) slen = outlen - 1;
+        memcpy(out, quote, slen);
+        out[slen] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+static void handle_ws_message(ClientContext* ctx, const char* payload, int length) {
+    char type[64] = {0};
+    if (!json_find_string(payload, length, "\"type\"", type, sizeof(type))) {
+        send_ws_simple(ctx, "error", "\"missing type\"");
+        return;
+    }
+
+    if (strcmp(type, "login") == 0) {
+        char user[64] = {0}, pass[64] = {0};
+        json_find_string(payload, length, "\"username\"", user, sizeof(user));
+        json_find_string(payload, length, "\"password\"", pass, sizeof(pass));
+        char buf[256];
+        int len = snprintf(buf, sizeof(buf), "%s|%s", user, pass);
+        handle_login(ctx, buf, len);
+        return;
+    }
+    if (strcmp(type, "signup") == 0 || strcmp(type, "register") == 0) {
+        char user[64] = {0}, pass[64] = {0};
+        json_find_string(payload, length, "\"username\"", user, sizeof(user));
+        json_find_string(payload, length, "\"password\"", pass, sizeof(pass));
+        char buf[256];
+        int len = snprintf(buf, sizeof(buf), "%s|%s", user, pass);
+        handle_register(ctx, buf, len);
+        return;
+    }
+    if (strcmp(type, "start_session") == 0) {
+        handle_start_session(ctx);
+        send_ws_simple(ctx, "session_started", "\"ok\"");
+        return;
+    }
+    if (strcmp(type, "end_session") == 0) {
+        handle_end_session(ctx);
+        return;
+    }
+    if (strcmp(type, "get_leaderboard") == 0) {
+        handle_get_leaderboard(ctx);
+        return;
+    }
+    if (strcmp(type, "get_profile") == 0) {
+        handle_get_profile(ctx);
+        return;
+    }
+    if (strcmp(type, "stream_frame") == 0) {
+        char b64[2048] = {0};
+        if (!json_find_string(payload, length, "\"data\"", b64, sizeof(b64))) {
+            send_ws_simple(ctx, "error", "\"missing data\"");
+            return;
+        }
+        size_t b64len = strlen(b64);
+        size_t need = base64_decoded_size(b64, b64len);
+        unsigned char* bin = (unsigned char*)malloc(need + 1);
+        if (!bin) { send_ws_simple(ctx, "error", "\"oom\""); return; }
+        int outlen = base64_decode(b64, b64len, bin, need);
+        if (outlen < 0) { free(bin); send_ws_simple(ctx, "error", "\"bad base64\""); return; }
+        handle_stream_frame(ctx, (const char*)bin, outlen);
+        free(bin);
+        return;
+    }
+
+    send_ws_simple(ctx, "error", "\"unknown type\"");
 }
 
 void* client_thread(void* arg) {
@@ -312,6 +480,48 @@ void* client_thread(void* arg) {
     ClientContext ctx = {0};
     ctx.client_fd = fd;
 
+    // Detect WebSocket handshake
+    {
+        char peek[3];
+        int n = recv(fd, peek, sizeof(peek), MSG_PEEK);
+        if (n > 0 && strncmp(peek, "GET", 3) == 0) {
+            if (websocket_handshake(fd) == 0) {
+                ctx.is_websocket = true;
+                log_message("INFO", "WebSocket client upgraded");
+            } else {
+                log_message("ERROR", "WebSocket handshake failed");
+                close(fd);
+                return NULL;
+            }
+        }
+    }
+
+    if (ctx.is_websocket) {
+        for (;;) {
+            char* payload = NULL;
+            uint8_t opcode = 0;
+            int len = websocket_recv_frame(fd, &payload, &opcode);
+            if (len < 0) break;
+            if (opcode == 0x8) { // close
+                free(payload);
+                break;
+            }
+            if (opcode == 0x9) { // ping
+                websocket_send_pong(fd, payload, len);
+                free(payload);
+                continue;
+            }
+            if (opcode == 0x1 && payload) { // text
+                handle_ws_message(&ctx, payload, len);
+            }
+            free(payload);
+        }
+        close(fd);
+        log_message("INFO", "WebSocket client disconnected");
+        return NULL;
+    }
+
+    // Fallback TLV mode
     for (;;) {
         PacketHeader hdr;
         if (recv_all(fd, &hdr, HEADER_SIZE) <= 0) break;

@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  username     String?
+  passwordHash String
+  avatar       String?
+  avatarUrl    String?
+  coins        Int      @default(0)
+  level        Int      @default(1)
+  exp          Int      @default(0)
+  experience   Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tasks          Task[]
+  studySessions  StudySession[]
+  roomMembers    RoomMember[]
+  pet            Pet?
+  inventory      Inventory[]
+  preferences    UserPreferences?
+  friendships1   Friendship[]   @relation("UserFriendships1")
+  friendships2   Friendship[]   @relation("UserFriendships2")
+  sentMessages   Message[]      @relation("SentMessages")
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  status      String    @default("todo")
+  priority    String?   @default("medium")
+  tags        String?
+  dueDate     DateTime?
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, status])
+  @@index([userId, dueDate])
+}
+
+model StudySession {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startTime     DateTime @default(now())
+  endTime       DateTime?
+  duration      Int?
+  focusScore    Float?
+  pomodoroCount Int      @default(0)
+  taskTitle     String?
+  coinsEarned   Int      @default(0)
+  expEarned     Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  focusLogs FocusLog[]
+
+  @@index([userId, startTime])
+}
+
+model FocusLog {
+  id        String       @id @default(cuid())
+  sessionId String
+  session   StudySession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  score     Float
+  timestamp DateTime     @default(now())
+
+  @@index([sessionId, timestamp])
+}
+
+model Room {
+  id          String       @id @default(cuid())
+  name        String
+  type        String
+  maxMembers  Int          @default(10)
+  isActive    Boolean      @default(true)
+  description String?
+  password    String?
+  createdAt   DateTime     @default(now())
+  
+  members     RoomMember[]
+  messages    Message[]
+
+  @@index([isActive, type])
+}
+
+model RoomMember {
+  id           String   @id @default(cuid())
+  roomId       String
+  room         Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  focusScore   Float?   @default(0)
+  studyTime    Int      @default(0)
+  joinedAt     DateTime @default(now())
+  
+  @@unique([roomId, userId])
+  @@index([roomId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("SentMessages", fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([roomId, createdAt])
+}
+
+model Pet {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  type        String
+  level       Int      @default(1)
+  hunger      Int      @default(100)
+  happiness   Int      @default(100)
+  energy      Int      @default(100)
+  lastFed     DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model ShopItem {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  type        String
+  price       Int
+  imageUrl    String?
+  isAvailable Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  inventory Inventory[]
+}
+
+model Inventory {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      ShopItem @relation(fields: [itemId], references: [id])
+  quantity  Int      @default(1)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, itemId])
+  @@index([userId])
+}
+
+model Friendship {
+  id         String   @id @default(cuid())
+  user1Id    String
+  user1      User     @relation("UserFriendships1", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2Id    String
+  user2      User     @relation("UserFriendships2", fields: [user2Id], references: [id], onDelete: Cascade)
+  status     String   @default("pending")
+  createdAt  DateTime @default(now())
+  acceptedAt DateTime?
+
+  @@unique([user1Id, user2Id])
+  @@index([user1Id, status])
+  @@index([user2Id, status])
+}
+
+model UserPreferences {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // UI Preferences
+  backgroundUrl   String?
+  musicVolume     Int      @default(50)
+  currentTrack    String?
+  cameraX         Int      @default(85)
+  cameraY         Int      @default(27)
+  cameraWidth     Int      @default(256)
+  cameraHeight    Int      @default(150)
+  isCameraEnabled Boolean  @default(false)
+  isMicEnabled    Boolean  @default(false)
+  theme           String   @default("dark")
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+}
