@@ -10,7 +10,7 @@ CLIENT_DIR = .
 
 # Source files
 COMMON_SRC = $(COMMON_DIR)/utils.c
-CLIENT_SRC = $(CLIENT_DIR)/network.c $(CLIENT_DIR)/base64.c $(CLIENT_DIR)/main.c
+CLIENT_SRC = $(CLIENT_DIR)/network.c $(CLIENT_DIR)/base64.c $(CLIENT_DIR)/ipc_websocket.c $(CLIENT_DIR)/ipc.c $(CLIENT_DIR)/main.c
 
 # Object files
 COMMON_OBJ = $(COMMON_SRC:.c=.o)

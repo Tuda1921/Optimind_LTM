@@ -16,27 +16,45 @@ class WsClient {
   }
 
   async connect() {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) return;
-    if (this.readyPromise) return this.readyPromise;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      console.log("[WS] Already connected");
+      return;
+    }
+    if (this.readyPromise) {
+      console.log("[WS] Connection already in progress");
+      return this.readyPromise;
+    }
 
+    console.log("[WS] Connecting to", this.url);
     this.readyPromise = new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(this.url);
       this.ws = ws;
 
       ws.onopen = () => {
+        console.log("[WS] Connected successfully");
         resolve();
       };
 
       ws.onmessage = (evt) => {
+        console.log("[WS] Message received:", evt.data.substring(0, 100));
         this.handleMessage(evt.data);
       };
 
       ws.onerror = (err) => {
-        reject(err);
+        console.error("[WS] Error event:", err);
+        // Browsers often provide no details; hint likely causes
+        console.error("[WS] Hint: ensure server on ws://127.0.0.1:9000 and not blocked by firewall/IPv6.");
+        reject(err instanceof Error ? err : new Error("WebSocket error"));
       };
 
-      ws.onclose = () => {
-        // reset so we can reconnect lazily
+      ws.onclose = (evt) => {
+        const code = (evt as CloseEvent).code;
+        const reason = (evt as CloseEvent).reason || "";
+        console.log("[WS] Connection closed", { code, reason });
+        // If closed before open, reject the connect promise
+        if (ws.readyState !== WebSocket.OPEN) {
+          reject(new Error(`WebSocket closed during connect (code=${code} reason=${reason})`));
+        }
         this.ws = null;
         this.readyPromise = null;
       };
@@ -121,6 +139,7 @@ class WsClient {
   }
 
   async register(username: string, password: string) {
+    // Send as username (backend interprets it as email)
     await this.send({ type: "register", username, password });
     await this.waitFor("register_ok", 5000, "register");
   }
@@ -150,5 +169,6 @@ class WsClient {
   }
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080";
+// Prefer IPv4 loopback explicitly to avoid IPv6 (::1) issues on Windows
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:9000";
 export const focusWs = new WsClient(WS_URL);

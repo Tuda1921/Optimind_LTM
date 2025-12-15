@@ -3,6 +3,7 @@
 
 import { useState, useEffect, FC, useRef, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import { useFocusWs } from "@/hooks/useFocusWs";
 
 import PomodoroTimer from "@/components/study/timer";
 import TaskListWidget from "@/components/study/task-list";
@@ -18,71 +19,68 @@ const StudyPage: FC = () => {
 	const [sessionId, setSessionId] = useState<string | null>(null);
 	const [currentFocusScore, setCurrentFocusScore] = useState<number>(0);
 	const focusLogsRef = useRef<number[]>([]); // Store focus scores for session
+	const [coinsEarned, setCoinsEarned] = useState<number | null>(null);
+	const hasActiveSession = useRef<boolean>(false);
+	const { connected, error, startSession, endSession, client } = useFocusWs();
 
-	// Start a new study session on component mount
+	// Register session_result listener once
 	useEffect(() => {
-		const startSession = async () => {
-			try {
-				const res = await fetch("/api/sessions", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ topicName: "Study Session" }),
-				});
-
-				if (res.ok) {
-					const data = await res.json();
-					setSessionId(data.session.id);
-				}
-			} catch (error) {
-				console.error("Failed to start session:", error);
-			}
-		};
-
-		startSession();
-
-		// Clean up: end session when page unmounts
+		if (!connected) return;
+		const off = client.on("session_result", (data: any) => {
+			const coins = typeof data?.coins === "number" ? data.coins : null;
+			if (coins !== null) setCoinsEarned(coins);
+		});
 		return () => {
-			if (sessionId) {
-				// Calculate average focus score
-				const avgFocus = focusLogsRef.current.length > 0
-					? Math.round(
-							focusLogsRef.current.reduce((a, b) => a + b, 0) /
-								focusLogsRef.current.length
-					  )
-					: 50;
-
-				fetch(`/api/sessions/${sessionId}/end`, {
-					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ focusScore: avgFocus }),
-				}).catch(console.error);
-			}
+			off();
 		};
-	}, [sessionId]);
+	}, [connected, client]);
 
-	// Log focus score every second to API
+	// Start/end session only once per run cycle
+	useEffect(() => {
+		if (!connected) return;
+		if (isRunning && !hasActiveSession.current) {
+			startSession()
+				.then(() => {
+					hasActiveSession.current = true;
+					setCoinsEarned(null);
+					focusLogsRef.current = [];
+					setSessionId("ws-session");
+				})
+				.catch((e) => {
+					console.error("WS startSession failed:", e);
+				});
+		}
+		if (!isRunning && hasActiveSession.current) {
+			const avgFocus = focusLogsRef.current.length > 0
+				? Math.round(
+						focusLogsRef.current.reduce((a, b) => a + b, 0) /
+							focusLogsRef.current.length
+				  )
+				: 50;
+			endSession()
+				.then(() => {
+					hasActiveSession.current = false;
+				})
+				.catch((e) => {
+					console.error("WS endSession failed:", e);
+				});
+		}
+	}, [connected, isRunning, startSession, endSession]);
+
+	// Log focus score locally for avg computation
 	useEffect(() => {
 		let logInterval: NodeJS.Timeout | null = null;
 
-		if (isRunning && sessionId && currentFocusScore > 0) {
+		if (isRunning && currentFocusScore > 0) {
 			logInterval = setInterval(async () => {
-				try {
-					await fetch(`/api/sessions/${sessionId}/focus-log`, {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ focusScore: currentFocusScore }),
-					});
-					focusLogsRef.current.push(currentFocusScore);
-				} catch (err) {
-					console.error("Failed to log focus score:", err);
-				}
+				focusLogsRef.current.push(currentFocusScore);
 			}, 1000); // Log every second
 		}
 
 		return () => {
 			if (logInterval) clearInterval(logInterval);
 		};
-	}, [isRunning, sessionId, currentFocusScore]);
+	}, [isRunning, currentFocusScore]);
 
 	return (
 		<main className="h-screen w-screen text-white p-6 transition-all duration-500 overflow-hidden">
@@ -124,6 +122,12 @@ const StudyPage: FC = () => {
 							isRunning={isRunning}
 							currentFocusScore={currentFocusScore}
 						/>
+						{/* Coins Result (shows after session end) */}
+						{coinsEarned !== null && (
+							<div className="text-center text-lg font-semibold">
+								Coins earned: {coinsEarned}
+							</div>
+						)}
 					</div>
 				</div>
 			</div>

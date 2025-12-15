@@ -58,8 +58,22 @@ export default function RegisterPage() {
 		}
 
 		try {
-			await register(username || email, password);
+			// Send email as username identifier for registration
+			await register(email, password);
 			setIsSuccess(true);
+			
+			// Save user data to cookie for middleware authentication
+			const userData = JSON.stringify({ email, username: email, register_time: new Date().toISOString() });
+			document.cookie = `user_data=${encodeURIComponent(userData)}; path=/; max-age=86400`;
+			
+			// Also save to localStorage for client-side persistence
+			localStorage.setItem("user_data", userData);
+			
+			// Redirect to login page after success
+			setTimeout(() => {
+				router.push("/login");
+				router.refresh();
+			}, 1500);
 		} catch (e: any) {
 			setError(e?.message || "Đăng ký thất bại");
 		} finally {

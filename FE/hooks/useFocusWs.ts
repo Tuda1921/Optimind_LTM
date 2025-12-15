@@ -9,13 +9,16 @@ export function useFocusWs() {
 
   useEffect(() => {
     let cancelled = false;
+    console.log("[useFocusWs] Attempting to connect to WebSocket...");
     focusWs
       .connect()
       .then(() => {
+        console.log("[useFocusWs] Successfully connected!");
         if (!cancelled) setConnected(true);
       })
       .catch((e) => {
-        console.error(e);
+        console.error("[useFocusWs] Connection failed:", e);
+        console.error("[useFocusWs] Error details:", JSON.stringify(e, null, 2));
         if (!cancelled) setError(e?.message || "Không thể kết nối WS");
       });
     return () => {

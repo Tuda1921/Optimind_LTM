@@ -29,17 +29,18 @@ size_t base64_encoded_size(size_t input_length) {
 void base64_encode(const unsigned char* data, size_t input_length, char* encoded_data, size_t encoded_capacity) {
     size_t i = 0, j = 0;
     while (i < input_length) {
-        unsigned octet_a = i < input_length ? data[i++] : 0;
-        unsigned octet_b = i < input_length ? data[i++] : 0;
-        unsigned octet_c = i < input_length ? data[i++] : 0;
+        size_t rem = input_length - i;
+        unsigned octet_a = data[i++];
+        unsigned octet_b = (rem > 1) ? data[i++] : 0;
+        unsigned octet_c = (rem > 2) ? data[i++] : 0;
 
         unsigned triple = (octet_a << 16) | (octet_b << 8) | octet_c;
 
         if (j + 4 > encoded_capacity) return; // avoid overflow; caller should size correctly
         encoded_data[j++] = b64_table[(triple >> 18) & 0x3F];
         encoded_data[j++] = b64_table[(triple >> 12) & 0x3F];
-        encoded_data[j++] = (i > input_length + 1) ? '=' : b64_table[(triple >> 6) & 0x3F];
-        encoded_data[j++] = (i > input_length) ? '=' : b64_table[triple & 0x3F];
+        encoded_data[j++] = (rem > 1) ? b64_table[(triple >> 6) & 0x3F] : '=';
+        encoded_data[j++] = (rem > 2) ? b64_table[triple & 0x3F] : '=';
     }
     if (j < encoded_capacity) encoded_data[j] = '\0';
 }

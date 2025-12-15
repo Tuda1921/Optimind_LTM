@@ -1,6 +1,6 @@
-#include "websocket.h"
+#define _GNU_SOURCE
+#include "ipc_websocket.h"
 
-#include <stdio.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,23 +11,7 @@
 #include <sys/socket.h>
 #include <errno.h>
 
-#include "../client/base64.h"
-
-// Define strcasestr if not available
-#ifndef strcasestr
-#define strcasestr strcasestr_impl
-#endif
-
-// Fallback for environments without strcasestr
-static char* strcasestr_impl(const char* haystack, const char* needle) {
-    if (!haystack || !needle) return NULL;
-    size_t nlen = strlen(needle);
-    if (nlen == 0) return (char*)haystack;
-    for (const char* p = haystack; *p; ++p) {
-        if (strncasecmp(p, needle, nlen) == 0) return (char*)p;
-    }
-    return NULL;
-}
+#include "base64.h"
 
 // Minimal SHA1 implementation (public domain style)
 typedef struct {
@@ -138,14 +122,23 @@ static void sha1_final(sha1_ctx* ctx, unsigned char digest[20]) {
 int websocket_handshake(int fd) {
     char req[4096];
     int n = recv(fd, req, sizeof(req) - 1, 0);
-    if (n <= 0) return -1;
+    if (n <= 0) {
+        fprintf(stderr, "[WS] handshake recv failed: %d\n", n);
+        return -1;
+    }
     req[n] = '\0';
+    fprintf(stderr, "[WS] handshake request (%d bytes):\n%s\n", n, req);
 
-    if (strncmp(req, "GET", 3) != 0) return -1;
+    if (strncmp(req, "GET", 3) != 0) {
+        fprintf(stderr, "[WS] not GET\n");
+        return -1;
+    }
     const char* key_hdr = "Sec-WebSocket-Key:";
     char* key_pos = strcasestr(req, key_hdr);
-    if (!key_pos) key_pos = strcasestr_impl(req, key_hdr);
-    if (!key_pos) return -1;
+    if (!key_pos) {
+        fprintf(stderr, "[WS] no Sec-WebSocket-Key\n");
+        return -1;
+    }
     key_pos += strlen(key_hdr);
     while (*key_pos == ' ' || *key_pos == '\t') key_pos++;
     char client_key[128] = {0};
@@ -154,7 +147,11 @@ int websocket_handshake(int fd) {
         client_key[i++] = *key_pos++;
     }
     client_key[i] = '\0';
-    if (client_key[0] == '\0') return -1;
+    fprintf(stderr, "[WS] client_key: %s\n", client_key);
+    if (client_key[0] == '\0') {
+        fprintf(stderr, "[WS] empty key\n");
+        return -1;
+    }
 
     char concat[256];
     snprintf(concat, sizeof(concat), "%s%s", client_key, WS_GUID);
@@ -167,18 +164,33 @@ int websocket_handshake(int fd) {
 
     char accept_b64[128];
     size_t enc_len = base64_encoded_size(20);
-    if (enc_len + 1 > sizeof(accept_b64)) return -1;
+    if (enc_len + 1 > sizeof(accept_b64)) {
+        fprintf(stderr, "[WS] b64 size too large\n");
+        return -1;
+    }
     base64_encode(digest, 20, accept_b64, sizeof(accept_b64));
+    fprintf(stderr, "[WS] accept_b64: %s\n", accept_b64);
 
     char resp[512];
     int resp_len = snprintf(resp, sizeof(resp),
         "HTTP/1.1 101 Switching Protocols\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
-        "Sec-WebSocket-Accept: %s\r\n\r\n",
+        "Sec-WebSocket-Accept: %s\r\n"
+        "\r\n",
         accept_b64);
-    if (resp_len <= 0 || resp_len >= (int)sizeof(resp)) return -1;
-    if (send(fd, resp, resp_len, 0) != resp_len) return -1;
+    fprintf(stderr, "[WS] handshake response (%d bytes):\n%s\n", resp_len, resp);
+    if (resp_len <= 0 || resp_len >= (int)sizeof(resp)) {
+        fprintf(stderr, "[WS] resp_len invalid\n");
+        return -1;
+    }
+    int sent = send(fd, resp, resp_len, 0);
+    fprintf(stderr, "[WS] send() returned %d (expected %d)\n", sent, resp_len);
+    if (sent != resp_len) {
+        fprintf(stderr, "[WS] send response failed: %s\n", strerror(errno));
+        return -1;
+    }
+    fprintf(stderr, "[WS] handshake complete, socket fd=%d ready for frames\n", fd);
     return 0;
 }
 
@@ -187,7 +199,20 @@ static int read_exact(int fd, void* buf, int len) {
     char* p = (char*)buf;
     while (got < len) {
         int n = recv(fd, p + got, len - got, 0);
-        if (n <= 0) return -1;
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+                // No data yet; wait a bit and retry (keep connection alive)
+                usleep(10000);
+                continue;
+            }
+            fprintf(stderr, "[IPC] read_exact: recv error at %d/%d bytes: %s\n", got, len, strerror(errno));
+            return -1;
+        }
+        if (n == 0) {
+            // Peer closed gracefully
+            fprintf(stderr, "[IPC] read_exact: connection closed at %d/%d bytes\n", got, len);
+            return -1;
+        }
         got += n;
     }
     return got;
@@ -195,10 +220,16 @@ static int read_exact(int fd, void* buf, int len) {
 
 int websocket_recv_frame(int fd, char** payload, uint8_t* opcode) {
     unsigned char hdr[2];
-    if (read_exact(fd, hdr, 2) < 0) return -1;
+    fprintf(stderr, "[WS] recv_frame: reading 2-byte header from fd=%d...\n", fd);
+    if (read_exact(fd, hdr, 2) < 0) {
+        fprintf(stderr, "[WS] recv_frame: FAILED to read header\n");
+        return -1;
+    }
+    fprintf(stderr, "[WS] recv_frame: header OK (0x%02x 0x%02x)\n", hdr[0], hdr[1]);
     *opcode = hdr[0] & 0x0F;
     int masked = (hdr[1] & 0x80) != 0;
     uint64_t len = hdr[1] & 0x7F;
+    fprintf(stderr, "[WS] recv_frame: opcode=0x%x masked=%d len=%lu\n", *opcode, masked, (unsigned long)len);
     if (len == 126) {
         unsigned char ext[2];
         if (read_exact(fd, ext, 2) < 0) return -1;
@@ -206,17 +237,29 @@ int websocket_recv_frame(int fd, char** payload, uint8_t* opcode) {
     } else if (len == 127) {
         unsigned char ext[8];
         if (read_exact(fd, ext, 8) < 0) return -1;
-        // Only support up to 32-bit lengths for simplicity
         len = ((uint64_t)ext[4] << 24) | ((uint64_t)ext[5] << 16) | ((uint64_t)ext[6] << 8) | ((uint64_t)ext[7]);
     }
     unsigned char mask[4] = {0};
     if (masked) {
         if (read_exact(fd, mask, 4) < 0) return -1;
     }
-    if (len > 4 * 1024 * 1024) return -1; // avoid huge alloc
+    if (len > 4 * 1024 * 1024) {
+        fprintf(stderr, "[WS] recv_frame: payload too large %lu\n", (unsigned long)len);
+        return -1;
+    }
+    fprintf(stderr, "[WS] recv_frame: allocating %lu bytes\n", (unsigned long)len);
     char* buf = (char*)malloc((size_t)len + 1);
-    if (!buf) return -1;
-    if (read_exact(fd, buf, (int)len) < 0) { free(buf); return -1; }
+    if (!buf) {
+        fprintf(stderr, "[WS] recv_frame: malloc FAILED\n");
+        return -1;
+    }
+    fprintf(stderr, "[WS] recv_frame: reading %lu bytes payload...\n", (unsigned long)len);
+    if (read_exact(fd, buf, (int)len) < 0) {
+        fprintf(stderr, "[WS] recv_frame: FAILED to read payload\n");
+        free(buf);
+        return -1;
+    }
+    fprintf(stderr, "[WS] recv_frame: payload OK\n");
     if (masked) {
         for (uint64_t i = 0; i < len; ++i) {
             buf[i] ^= mask[i % 4];
@@ -228,6 +271,7 @@ int websocket_recv_frame(int fd, char** payload, uint8_t* opcode) {
 }
 
 static int websocket_send_frame(int fd, uint8_t opcode, const char* data, int len) {
+    fprintf(stderr, "[WS] send_frame: fd=%d opcode=0x%x len=%d\n", fd, opcode, len);
     unsigned char header[10];
     int hlen = 0;
     header[hlen++] = 0x80 | (opcode & 0x0F);
@@ -245,10 +289,19 @@ static int websocket_send_frame(int fd, uint8_t opcode, const char* data, int le
         header[hlen++] = (len >> 8) & 0xFF;
         header[hlen++] = len & 0xFF;
     }
-    if (send(fd, header, hlen, 0) != hlen) return -1;
-    if (len > 0 && data) {
-        if (send(fd, data, len, 0) != len) return -1;
+    if (send(fd, header, hlen, 0) != hlen) {
+        fprintf(stderr, "[WS] send_frame: FAILED to send header\n");
+        return -1;
     }
+    fprintf(stderr, "[WS] send_frame: header sent (%d bytes)\n", hlen);
+    if (len > 0 && data) {
+        if (send(fd, data, len, 0) != len) {
+            fprintf(stderr, "[WS] send_frame: FAILED to send payload\n");
+            return -1;
+        }
+        fprintf(stderr, "[WS] send_frame: payload sent (%d bytes)\n", len);
+    }
+    fprintf(stderr, "[WS] send_frame: COMPLETE\n");
     return 0;
 }
 
@@ -258,6 +311,9 @@ int websocket_send_text(int fd, const char* data, int len) {
 }
 
 int websocket_send_pong(int fd, const char* data, int len) {
-    if (len < 0) len = (int)strlen(data);
     return websocket_send_frame(fd, 0xA, data, len);
+}
+
+int websocket_send_close(int fd) {
+    return websocket_send_frame(fd, 0x8, NULL, 0);
 }

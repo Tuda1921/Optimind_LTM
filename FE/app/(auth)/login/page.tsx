@@ -33,10 +33,25 @@ export default function LoginPage() {
 			return;
 		}
 		try {
+			console.log("[Login] Attempting login with email:", email);
 			await login(email, password);
+			console.log("[Login] login_ok event received!");
+			
+			// Save user data to cookie for middleware authentication
+			const userData = JSON.stringify({ email, username: email, login_time: new Date().toISOString() });
+			console.log("[Login] Setting user_data cookie:", userData);
+			document.cookie = `user_data=${encodeURIComponent(userData)}; path=/; max-age=86400`;
+			
+			// Also save to localStorage for client-side persistence
+			localStorage.setItem("user_data", userData);
+			
+			// Redirect to study page
+			console.log("[Login] Redirecting to /study...");
 			router.push("/study");
+			console.log("[Login] router.push() called, refresh...");
 			router.refresh();
 		} catch (e: any) {
+			console.error("[Login] Error:", e);
 			setError(e?.message || "Đăng nhập thất bại");
 		} finally {
 			setLoading(false);

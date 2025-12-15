@@ -20,6 +20,7 @@
 #include "../common/protocol.h"
 #include "../common/config.h"
 #include "base64.h"
+#include "ipc.h"
 
 extern void log_message(const char* level, const char* format, ...);
 
@@ -92,14 +93,24 @@ static void* receiver_thread(void* arg) {
         switch (packet->type) {
             case MSG_FOCUS_WARN:
                 printf("\n[SERVER] Focus warning! Please stay attentive.\n");
+                ipc_broadcast_event("focus_warn", NULL);
                 fflush(stdout);
                 break;
             case MSG_FOCUS_UPDATE:
                 printf("[SERVER] Focus score: %s\n", payload);
+                ipc_broadcast_event("focus_update", payload);
                 break;
             case MSG_UPDATE_COINS:
                 printf("[SERVER] Coins update: %s\n", payload);
+                ipc_broadcast_event("session_result", payload);
                 break;
+            case MSG_ERROR: {
+                printf("[SERVER] Error: %s\n", payload);
+                char errbuf[512];
+                snprintf(errbuf, sizeof(errbuf), "{\"message\":\"%s\"}", payload);
+                ipc_broadcast_event("error", errbuf);
+                break;
+            }
             case MSG_LOGIN_RES:
             case MSG_REGISTER_RES:
             case MSG_RES_LEADERBOARD:
@@ -115,6 +126,24 @@ static void* receiver_thread(void* arg) {
                 g_resp.ready = 1;
                 pthread_cond_signal(&g_resp.cv);
                 pthread_mutex_unlock(&g_resp.mtx);
+
+                if (packet->type == MSG_LOGIN_RES) {
+                    if (strcmp(payload, RESPONSE_OK) == 0) ipc_broadcast_event("login_ok", "\"ok\"");
+                    else {
+                        char errbuf[256]; snprintf(errbuf, sizeof(errbuf), "{\"message\":\"%s\"}", payload);
+                        ipc_broadcast_event("error", errbuf);
+                    }
+                } else if (packet->type == MSG_REGISTER_RES) {
+                    if (strcmp(payload, RESPONSE_OK) == 0) ipc_broadcast_event("register_ok", "\"ok\"");
+                    else {
+                        char errbuf[256]; snprintf(errbuf, sizeof(errbuf), "{\"message\":\"%s\"}", payload);
+                        ipc_broadcast_event("error", errbuf);
+                    }
+                } else if (packet->type == MSG_RES_LEADERBOARD) {
+                    ipc_broadcast_event("leaderboard", payload);
+                } else if (packet->type == MSG_RES_PROFILE) {
+                    ipc_broadcast_event("profile", payload);
+                }
                 break;
             }
             default:
@@ -144,6 +173,13 @@ int main() {
         return 1;
     }
     log_message("INFO", "Connected to %s:%d", SERVER_HOST, SERVER_PORT);
+
+    // Start IPC WebSocket server for FE
+    if (ipc_start(&g_network) != 0) {
+        log_message("ERROR", "Failed to start IPC server");
+        network_close(&g_network);
+        return 1;
+    }
 
     pthread_t th;
     if (pthread_create(&th, NULL, receiver_thread, NULL) != 0) {
@@ -263,6 +299,7 @@ int main() {
     }
 
     g_running = 0;
+    ipc_stop();
     network_close(&g_network);
     pthread_mutex_destroy(&g_resp.mtx);
     pthread_cond_destroy(&g_resp.cv);
